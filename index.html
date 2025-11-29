@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Simulación Efecto Doppler</title>
+<style>
+  body {
+    background-color: white;
+    font-family: Arial, sans-serif;
+    text-align: center;
+  }
+  canvas {
+    background: #dcdcdc;
+    border: 3px solid #555;
+    display: block;
+    margin: 0 auto;
+  }
+  .panel {
+    background: #f7f7f7;
+    border-top: 2px solid #ccc;
+    padding: 15px;
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    flex-wrap: wrap;
+    width: 1300px;
+    margin: 0 auto;
+  }
+  .control {
+    margin: 5px 10px;
+  }
+  .control label {
+    display: block;
+    font-size: 14px;
+    margin-bottom: 3px;
+  }
+  .control input[type="range"] {
+    width: 150px;
+  }
+  .btn {
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  .btn:hover { background-color: #0056b3; }
+  #mensaje {
+    position: absolute;
+    top: 45%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(230, 230, 230, 0.9);
+    color: #111;
+    font-size: 22px;
+    font-weight: bold;
+    padding: 15px 25px;
+    border-radius: 10px;
+    display: none;
+  }
+  #frec {
+    margin-top: 10px;
+    font-size: 18px;
+    color: #222;
+    font-weight: bold;
+  }
+  #convencion {
+    font-size: 14px;
+    color: #555;
+    margin-bottom: 5px;
+  }
+</style>
+</head>
+<body>
+<h2>Simulación del Efecto Doppler</h2>
+<div id="frec">f’ = 0 Hz</div>
+<div id="convencion">Convención: → derecha = velocidad positiva | ← izquierda = velocidad negativa</div>
+<canvas id="simCanvas" width="1300" height="400"></canvas>
+<div id="mensaje"></div>
+
+<div class="panel">
+  <div class="control">
+    <label>Modo</label>
+    <select id="modo">
+      <option value="carroFijo">Carro fijo (fuente se mueve)</option>
+      <option value="ambulanciaFija">Ambulancia fija (observador se mueve)</option>
+    </select>
+  </div>
+  <div class="control">
+    <label>Frecuencia de la fuente (Hz)</label>
+    <input type="number" id="freqFuente" value="440" min="100" max="1000" step="10">
+  </div>
+  <div class="control">
+    <label>Velocidad de la fuente (m/s)</label>
+    <input type="range" id="velFuente" min="-80" max="80" step="1" value="0">
+    <span id="valFuente">0</span>
+  </div>
+  <div class="control">
+    <label>Velocidad del observador (m/s)</label>
+    <input type="range" id="velObs" min="-40" max="40" step="1" value="0">
+    <span id="valObs">0</span>
+  </div>
+  <div class="control">
+    <label>Velocidad del sonido V (m/s)</label>
+    <input type="number" id="velSonido" value="343" disabled>
+  </div>
+  <div class="control">
+    <button class="btn" id="iniciarBtn">Iniciar</button>
+    <button class="btn" id="pausaBtn" disabled>Pausar/Reanudar</button>
+    <button class="btn" id="reiniciarBtn" disabled>Reiniciar</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('simCanvas');
+const ctx = canvas.getContext('2d');
+const mensaje = document.getElementById('mensaje');
+const freqFuenteInput = document.getElementById('freqFuente');
+const velFuenteInput = document.getElementById('velFuente');
+const velObsInput = document.getElementById('velObs');
+const valFuente = document.getElementById('valFuente');
+const valObs = document.getElementById('valObs');
+const iniciarBtn = document.getElementById('iniciarBtn');
+const pausaBtn = document.getElementById('pausaBtn');
+const reiniciarBtn = document.getElementById('reiniciarBtn');
+const frecDisplay = document.getElementById('frec');
+const modoSelect = document.getElementById('modo');
+const velSonido = 343;
+
+let fuente = { x: 1050, y: 150, v: 0 };
+let observador = { x: 250, y: 260, v: 0 };
+let ondas = [];
+let tiempo = 0;
+let running = false;
+let paused = false;
+let f0 = 440;
+
+valFuente.textContent = velFuenteInput.value;
+valObs.textContent = velObsInput.value;
+
+velFuenteInput.oninput = () => valFuente.textContent = velFuenteInput.value;
+velObsInput.oninput = () => valObs.textContent = velObsInput.value;
+
+// --- Configuración del modo ---
+function configurarModo() {
+  const modo = modoSelect.value;
+
+  velFuenteInput.disabled = false;
+  velObsInput.disabled = false;
+
+  if (modo === "carroFijo") {
+    fuente.x = 250; observador.x = 1050;
+    velObsInput.disabled = true;
+  } else if (modo === "ambulanciaFija") {
+    fuente.x = 1050; observador.x = 250;
+    velFuenteInput.disabled = true;
+  }
+
+  draw();
+}
+
+// --- Dibujo del entorno ---
+function drawRoad() {
+  ctx.fillStyle = '#777';
+  ctx.fillRect(0, 100, canvas.width, 200);
+  ctx.strokeStyle = 'white';
+  ctx.lineWidth = 4;
+  for (let i = 0; i < canvas.width; i += 60) {
+    ctx.beginPath();
+    ctx.moveTo(i, 200);
+    ctx.lineTo(i + 30, 200);
+    ctx.stroke();
+  }
+}
+
+function drawVehicles() {
+  // 🚑 Fuente (ambulancia roja con cuadrado blanco)
+  ctx.fillStyle = 'red';
+  ctx.fillRect(fuente.x - 25, fuente.y - 15, 50, 30);
+  ctx.fillStyle = 'white';
+  ctx.fillRect(fuente.x - 5, fuente.y - 5, 10, 10);
+
+  // 🚗 Observador (carro azul)
+  ctx.fillStyle = 'blue';
+  ctx.fillRect(observador.x - 25, observador.y - 20, 50, 30);
+}
+
+function drawWaves() {
+  ctx.strokeStyle = 'gray';
+  ctx.lineWidth = 2;
+  ondas.forEach(o => {
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, o.r, 0, 2 * Math.PI);
+    ctx.stroke();
+  });
+}
+
+// --- Actualización de estado ---
+function updateWaves(dt) {
+  if (tiempo % 0.25 < 0.02) ondas.push({x: fuente.x, y: fuente.y, r: 0});
+  ondas.forEach(o => o.r += velSonido * dt);
+  ondas = ondas.filter(o => o.r < canvas.width * 2);
+}
+
+function updatePositions(dt) {
+  fuente.x += fuente.v * dt;
+  observador.x += observador.v * dt;
+}
+
+function calcularFrecuenciaObservada() {
+  return f0 * (velSonido + observador.v) / (velSonido - fuente.v);
+}
+
+function mostrarMensaje(texto) {
+  mensaje.textContent = texto;
+  mensaje.style.display = 'block';
+}
+function ocultarMensaje() { mensaje.style.display = 'none'; }
+
+function reiniciar() {
+  running = false;
+  paused = false;
+  tiempo = 0;
+  ondas = [];
+  ocultarMensaje();
+  iniciarBtn.disabled = false;
+  pausaBtn.disabled = true;
+  reiniciarBtn.disabled = true;
+
+  // Reiniciar velocidades solo aquí
+  velFuenteInput.value = 0;
+  velObsInput.value = 0;
+  valFuente.textContent = "0";
+  valObs.textContent = "0";
+  configurarModo();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawRoad();
+  drawWaves();
+  drawVehicles();
+}
+
+function simulate() {
+  if (!running || paused) return;
+  const dt = 0.02;
+  tiempo += dt;
+
+  const modo = modoSelect.value;
+  if (modo === "carroFijo") {
+    fuente.v = parseFloat(velFuenteInput.value);
+    observador.v = 0;
+  } else {
+    observador.v = parseFloat(velObsInput.value);
+    fuente.v = 0;
+  }
+
+  updatePositions(dt);
+  updateWaves(dt);
+  const freqObs = calcularFrecuenciaObservada();
+  frecDisplay.textContent = `f’ = ${freqObs.toFixed(2)} Hz`;
+  draw();
+
+  const dist = Math.abs(fuente.x - observador.x);
+  if (dist < 60) {
+    mostrarMensaje("Fin de la simulación (encuentro)");
+    running = false;
+    return;
+  }
+
+  if (fuente.x < 0 || fuente.x > canvas.width || observador.x < 0 || observador.x > canvas.width) {
+    mostrarMensaje("Fin de la simulación (fuera del rango visible)");
+    running = false;
+    return;
+  }
+
+  requestAnimationFrame(simulate);
+}
+
+// --- Botones ---
+iniciarBtn.onclick = () => {
+  configurarModo();
+  running = true;
+  paused = false;
+  f0 = parseFloat(freqFuenteInput.value);
+  iniciarBtn.disabled = true;
+  pausaBtn.disabled = false;
+  reiniciarBtn.disabled = false;
+  simulate();
+};
+
+pausaBtn.onclick = () => {
+  paused = !paused;
+  if (running) requestAnimationFrame(simulate);
+};
+
+reiniciarBtn.onclick = reiniciar;
+modoSelect.onchange = configurarModo;
+
+// Inicial
+draw();
+</script>
+</body>
+</html>
+
